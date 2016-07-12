@@ -105,7 +105,7 @@ double grindNonces(int cycles_per_iter) {
 		return -1;
 	}
 	target_corrupt_flag = 0;
-	size_t global_item_size = 1 << intensity;
+	size_t global_item_size = 1ULL << intensity;
 
 	// Copy target to header.
 	for (i = 0; i < 8; i++) {
@@ -269,7 +269,7 @@ void printPlatformsAndDevices() {
 		return;
 	}
 
-	int i,j; // Iterate through each platform and print its devices
+	unsigned i,j; // Iterate through each platform and print its devices
 	for (i = 0; i < platformCount; i++) {
 		char str[80];
 		// Print platform info.
@@ -324,6 +324,8 @@ int main(int argc, char *argv[]) {
 	unsigned cycles_per_iter;
 	char hostname[128] = "localhost";
 	char port_number[7] = ":9980";
+	char querystring[128] = "";
+	char kernelFileName[64] = "./sia-gpu-miner.cl";
 	double hash_rate;
 
 	// Parse args.
@@ -349,11 +351,14 @@ int main(int argc, char *argv[]) {
 			printf("\n");
 			printf("\t P - port: which port to use when talking to the siad api. (e.g. -p :9980)\n");
 			printf("\n");
+			printf("\t Q - querystring: used to identify yourself at a mining pool (e.g. address=[YOUR_WALLET_ADDRESS]&worker=[WORKER_NAME]&email=[YOUR_EMAIL])\n");
+			printf("\n");
 			printf("\t p - OpenCL platform ID: Just what it says on the tin. If you're finding no GPUs,\n");
 			printf("\t\tyet you're sure they exist, try a value other than 0, like 1, or 2. Default is 0.\n");
 			printf("\n");
 			printf("\t d - OpenCL device ID: Self-explanatory; it's the GPU index. Note that different\n");
 			printf("\t\tOpenCL platforms will likely have different devices available. Default is 0.\n");
+			printf("\t k - OpenCL kernel file name.\n");
 			printf("\n");
 			printPlatformsAndDevices();
 			printf("\n");
@@ -400,6 +405,14 @@ int main(int argc, char *argv[]) {
 				exit(1);
 			}
 			break;
+		case 'k':
+			if (++i >= argc) {
+				printf("Please pass in a string following your flag (e.g. -k kernel.cl)\n");
+				exit(1);
+			}
+			strcpy(kernelFileName, argv[i]);
+			printf("Kernel filename set to %s\n", kernelFileName);
+			break;
 		case 'C':
 			if (++i >= argc) {
 				printf("Please pass in a number following your flag (e.g. -C 10)\n");
@@ -426,6 +439,14 @@ int main(int argc, char *argv[]) {
 			strcpy(hostname, argv[i]);
 			printf("Host name set to %s\n", hostname);
 			break;
+		case 'Q':
+			if (++i >= argc) {
+				printf("Please pass in a query string as defined by the mining pool");
+				exit(1);
+			}
+			sprintf(querystring, "\"%s\"", argv[i]);
+			printf("Query string set to %s\n", querystring);
+			break;
 		case 'P':
 			if (++i >= argc) {
 				printf("Please pass in a port number following your flag (e.g. -P :9980)\n");
@@ -447,16 +468,15 @@ int main(int argc, char *argv[]) {
 	}
 
 	// Set siad URL.
-	set_host(hostname, port_number);
+	set_host(hostname, port_number, querystring);
 
 	// Load kernel source file.
 	printf("Initializing...\n");
 	fflush(stdout);
 	FILE *fp;
-	const char fileName[] = "./sia-gpu-miner.cl";
 	size_t source_size;
 	char *source_str;
-	fp = fopen(fileName, "r");
+	fp = fopen(kernelFileName, "r");
 	if (!fp) {
 		fprintf(stderr, "Failed to load kernel.\n");
 		exit(1);

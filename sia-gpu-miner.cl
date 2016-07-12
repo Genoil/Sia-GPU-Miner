@@ -1,5 +1,11 @@
-static inline ulong rotr64( __const ulong w, __const unsigned c ) { return ( w >> c ) | ( w << ( 64 - c ) ); }
-
+inline static uint2 ror64(const uint2 x, const uint y)
+{
+    return (uint2)(((x).x>>y)^((x).y<<(32-y)),((x).y>>y)^((x).x<<(32-y)));
+}
+inline static uint2 ror64_2(const uint2 x, const uint y)
+{
+    return (uint2)(((x).y>>(y-32))^((x).x<<(64-y)),((x).x>>(y-32))^((x).y<<(64-y)));
+}
 __constant static const uchar blake2b_sigma[12][16] = {
 	{ 0,  1,  2,  3,  4,  5,  6,  7,  8,  9,  10, 11, 12, 13, 14, 15 } ,
 	{ 14, 10, 4,  8,  9,  15, 13, 6,  1,  12, 0,  2,  11, 7,  5,  3  } ,
@@ -13,7 +19,6 @@ __constant static const uchar blake2b_sigma[12][16] = {
 	{ 10, 2,  8,  4,  7,  6,  1,  5,  15, 11, 9,  14, 3,  12, 13, 0  } ,
 	{ 0,  1,  2,  3,  4,  5,  6,  7,  8,  9,  10, 11, 12, 13, 14, 15 } ,
 	{ 14, 10, 4,  8,  9,  15, 13, 6,  1,  12, 0,  2,  11, 7,  5,  3  } };
-
 // Target is passed in via headerIn[32 - 29]
 __kernel void nonceGrind(__global ulong *headerIn, __global ulong *nonceOut) {
 	ulong target = headerIn[4];
@@ -22,22 +27,19 @@ __kernel void nonceGrind(__global ulong *headerIn, __global ulong *nonceOut) {
 	                (ulong)get_global_id(0), headerIn[5],
 	                headerIn[6], headerIn[7],
 	                headerIn[8], headerIn[9], 0, 0, 0, 0, 0, 0 };
-
 	ulong v[16] = { 0x6a09e667f2bdc928, 0xbb67ae8584caa73b, 0x3c6ef372fe94f82b, 0xa54ff53a5f1d36f1,
 	                0x510e527fade682d1, 0x9b05688c2b3e6c1f, 0x1f83d9abfb41bd6b, 0x5be0cd19137e2179,
 	                0x6a09e667f3bcc908, 0xbb67ae8584caa73b, 0x3c6ef372fe94f82b, 0xa54ff53a5f1d36f1,
 	                0x510e527fade68281, 0x9b05688c2b3e6c1f, 0xe07c265404be4294, 0x5be0cd19137e2179 };
-
 #define G(r,i,a,b,c,d) \
-	a = a + b + m[blake2b_sigma[r][2*i]]; \
-	d = rotr64(d ^ a, 32); \
+	a = a + b + m[ blake2b_sigma[r][2*i] ]; \
+	((uint2*)&d)[0] = ((uint2*)&d)[0].yx ^ ((uint2*)&a)[0].yx; \
 	c = c + d; \
-	b = rotr64(b ^ c, 24); \
-	a = a + b + m[blake2b_sigma[r][2*i+1]]; \
-	d = rotr64(d ^ a, 16); \
+	((uint2*)&b)[0] = ror64( ((uint2*)&b)[0] ^ ((uint2*)&c)[0], 24U); \
+	a = a + b + m[ blake2b_sigma[r][2*i+1] ]; \
+	((uint2*)&d)[0] = ror64( ((uint2*)&d)[0] ^ ((uint2*)&a)[0], 16U); \
 	c = c + d; \
-	b = rotr64(b ^ c, 63);
-
+    ((uint2*)&b)[0] = ror64_2( ((uint2*)&b)[0] ^ ((uint2*)&c)[0], 63U);
 #define ROUND(r)                    \
 	G(r,0,v[ 0],v[ 4],v[ 8],v[12]); \
 	G(r,1,v[ 1],v[ 5],v[ 9],v[13]); \
@@ -47,7 +49,6 @@ __kernel void nonceGrind(__global ulong *headerIn, __global ulong *nonceOut) {
 	G(r,5,v[ 1],v[ 6],v[11],v[12]); \
 	G(r,6,v[ 2],v[ 7],v[ 8],v[13]); \
 	G(r,7,v[ 3],v[ 4],v[ 9],v[14]);
-
 	ROUND( 0 );
 	ROUND( 1 );
 	ROUND( 2 );
@@ -62,7 +63,6 @@ __kernel void nonceGrind(__global ulong *headerIn, __global ulong *nonceOut) {
 	ROUND( 11 );
 #undef G
 #undef ROUND
-
 	if (as_ulong(as_uchar8(0x6a09e667f2bdc928 ^ v[0] ^ v[8]).s76543210) < target) {
 		*nonceOut = m[4];
 		return;
