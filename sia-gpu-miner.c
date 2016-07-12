@@ -444,8 +444,8 @@ int main(int argc, char *argv[]) {
 				printf("Please pass in a query string as defined by the mining pool");
 				exit(1);
 			}
-			sprintf(querystring, "\"%s\"", argv[i]);
-			printf("Query string set to %s\n", querystring);
+			strcpy(querystring, argv[i]);
+			printf("Query string set to \"%s\"\n", querystring);
 			break;
 		case 'P':
 			if (++i >= argc) {
