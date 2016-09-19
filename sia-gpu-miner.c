@@ -26,6 +26,7 @@
 #include <signal.h>
 
 #include "network.h"
+#define SPIRV_SUPPORT
 
 // 2^intensity hashes are calculated each time the kernel is called
 // Minimum of 2^8 (256) because our default local_item_size is 256
@@ -33,7 +34,7 @@
 // Max of 2^32 so that people can't send an hour of work to the GPU at one time
 #define MIN_INTENSITY		8
 #define MAX_INTENSITY		32
-#define DEFAULT_INTENSITY	16
+#define DEFAULT_INTENSITY	20
 
 // Number of times the GPU kernel is called between updating the command line text
 #define MIN_CPI 		1     // Must do one call per update
@@ -119,6 +120,7 @@ double grindNonces(int cycles_per_iter) {
 		// Offset global ids so that each loop call tries a different set of
 		// hashes.
 		size_t globalid_offset = i * global_item_size;
+		size_t global_size_simd = global_item_size / 4;
 
 		// Copy input data to the memory buffer.
 		ret = clEnqueueWriteBuffer(command_queue, blockHeadermobj, CL_TRUE, 0, 80 * sizeof(uint8_t), blockHeader, 0, NULL, NULL);
@@ -131,7 +133,7 @@ double grindNonces(int cycles_per_iter) {
 		}
 
 		// Run the kernel.
-		ret = clEnqueueNDRangeKernel(command_queue, kernel, 1, &globalid_offset, &global_item_size, &local_item_size, 0, NULL, NULL);
+		ret = clEnqueueNDRangeKernel(command_queue, kernel, 1, &globalid_offset, &global_size_simd, &local_item_size, 0, NULL, NULL);
 		if (ret != CL_SUCCESS) {
 			printf("failed to start kernel: %d\n", ret); exit(1);
 		}
@@ -141,7 +143,7 @@ double grindNonces(int cycles_per_iter) {
 		if (ret != CL_SUCCESS) {
 			printf("failed to read nonce from buffer: %d\n", ret); exit(1);
 		}
-		if (nonceOut[0] != 0) {
+		if (nonceOut[0] != 0 || nonceOut[1] != 0 || nonceOut[2] != 0 || nonceOut[3] != 0 || nonceOut[4] != 0 || nonceOut[5] != 0 || nonceOut[6] != 0 || nonceOut[7] != 0) {
 			// Copy nonce to header.
 			memcpy(blockHeader+32, nonceOut, 8);
 			if (!submit_header(blockHeader)) {
@@ -207,7 +209,7 @@ void selectOCLDevice(cl_platform_id *OCLPlatform, cl_device_id *OCLDevice, cl_ui
 	
 	// Now fetch device ID list for this platform similarly to the fetch for the platform IDs.
 	// platformid has been verified to be within bounds.
-	ret = clGetDeviceIDs(platformids[platformid], CL_DEVICE_TYPE_GPU, 0, NULL, &deviceCount);
+	ret = clGetDeviceIDs(platformids[platformid], /*CL_DEVICE_TYPE_GPU*/CL_DEVICE_TYPE_CPU, 0, NULL, &deviceCount);
 	if(ret != CL_SUCCESS) {
 		printf("Failed to get number of OpenCL devices with error code %d (clGetDeviceIDs).\n", ret);
 		free(platformids);
@@ -232,7 +234,7 @@ void selectOCLDevice(cl_platform_id *OCLPlatform, cl_device_id *OCLDevice, cl_ui
 	
 	deviceids = (cl_device_id *)malloc(sizeof(cl_device_id) * deviceCount);
 	
-	ret = clGetDeviceIDs(platformids[platformid], CL_DEVICE_TYPE_GPU, deviceCount, deviceids, NULL);
+	ret = clGetDeviceIDs(platformids[platformid], /*CL_DEVICE_TYPE_GPU*/CL_DEVICE_TYPE_CPU, deviceCount, deviceids, NULL);
 	if(ret != CL_SUCCESS) {
 		printf("Failed to retrieve OpenCL device IDs for selected platform with error code %d (clGetDeviceIDs).\n", ret);
 		free(platformids);
@@ -279,7 +281,7 @@ void printPlatformsAndDevices() {
 			continue;
 		}
 		printf("Devices on platform %d, \"%s\":\n", i, str);
-		ret = clGetDeviceIDs(platformids[i], CL_DEVICE_TYPE_GPU, 0, NULL, &deviceCount);
+		ret = clGetDeviceIDs(platformids[i], /*CL_DEVICE_TYPE_GPU*/CL_DEVICE_TYPE_CPU, 0, NULL, &deviceCount);
 		if (ret != CL_SUCCESS) {
 			printf("\tError while fetching device ids.\n");
 			continue;
@@ -290,7 +292,7 @@ void printPlatformsAndDevices() {
 		}
 		deviceids = (cl_device_id *)malloc(sizeof(cl_device_id) * deviceCount);
 
-		ret = clGetDeviceIDs(platformids[i], CL_DEVICE_TYPE_GPU, deviceCount, deviceids, NULL);
+		ret = clGetDeviceIDs(platformids[i], /*CL_DEVICE_TYPE_GPU*/CL_DEVICE_TYPE_CPU, deviceCount, deviceids, NULL);
 		if (ret != CL_SUCCESS) {
 			printf("\tError while getting device ids.\n");
 			free(deviceids);
@@ -325,7 +327,8 @@ int main(int argc, char *argv[]) {
 	char hostname[128] = "localhost";
 	char port_number[7] = ":9980";
 	char querystring[128] = "";
-	char kernelFileName[64] = "./sia-gpu-miner.cl";
+	//char kernelFileName[64] = "./sia-gpu-miner.cl";
+	char kernelFileName[64] = "./sia-gpu-miner-simd_x64.spirv";
 	double hash_rate;
 
 	// Parse args.
@@ -476,7 +479,7 @@ int main(int argc, char *argv[]) {
 	FILE *fp;
 	size_t source_size;
 	char *source_str;
-	fp = fopen(kernelFileName, "r");
+	fp = fopen(kernelFileName, "rb");
 	if (!fp) {
 		fprintf(stderr, "Failed to load kernel.\n");
 		exit(1);
@@ -510,7 +513,11 @@ int main(int argc, char *argv[]) {
 	if (ret != CL_SUCCESS) { printf("failed to create nonceOutmobj buffer: %d\n", ret); exit(1); }
 
 	// Create kernel program from source file.
+#ifdef SPIRV_SUPPORT
+	program = clCreateProgramWithIL(context, source_str, source_size, &ret);
+#else 
 	program = clCreateProgramWithSource(context, 1, (const char **)&source_str, (const size_t *)&source_size, &ret);
+#endif
 	if (ret != CL_SUCCESS) { printf("failed to crate program with source: %d\n", ret); exit(1); }
 	ret = clBuildProgram(program, 1, &device_id, NULL, NULL, NULL);
 	if (ret != CL_SUCCESS) {
