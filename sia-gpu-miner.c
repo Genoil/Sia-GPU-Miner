@@ -50,6 +50,10 @@ cl_command_queue command_queue = NULL;
 cl_kernel kernel = NULL;
 cl_int ret;
 
+uint8_t blockHeader[80];
+uint8_t target[32] = { 255 };
+uint8_t nonceOut[8] = { 0 };
+
 // mem objects for storing our kernel parameters
 cl_mem blockHeadermobj = NULL;
 cl_mem nonceOutmobj = NULL;
@@ -83,10 +87,6 @@ double grindNonces(int cycles_per_iter) {
 	#else
 	clock_t startTime = clock();
 	#endif
-
-	uint8_t blockHeader[80];
-	uint8_t target[32] = {255};
-	uint8_t nonceOut[8] = {0};
 
 	// Get new block header and target.
 	if (get_header_for_work(target, blockHeader) != 0) {
@@ -123,29 +123,33 @@ double grindNonces(int cycles_per_iter) {
 		size_t global_size_simd = global_item_size / 4;
 
 		// Copy input data to the memory buffer.
-		ret = clEnqueueWriteBuffer(command_queue, blockHeadermobj, CL_TRUE, 0, 80 * sizeof(uint8_t), blockHeader, 0, NULL, NULL);
+		/*ret = clEnqueueWriteBuffer(command_queue, blockHeadermobj, CL_TRUE, 0, 80 * sizeof(uint8_t), blockHeader, 0, NULL, NULL);
 		if (ret != CL_SUCCESS) {
 			printf("failed to write to blockHeadermobj buffer: %d\n", ret); exit(1);
 		}
 		ret = clEnqueueWriteBuffer(command_queue, nonceOutmobj, CL_TRUE, 0, 8 * sizeof(uint8_t), nonceOut, 0, NULL, NULL);
 		if (ret != CL_SUCCESS) {
 			printf("failed to write to targmobj buffer: %d\n", ret); exit(1);
-		}
+		}*/
 
 		// Run the kernel.
 		ret = clEnqueueNDRangeKernel(command_queue, kernel, 1, &globalid_offset, &global_size_simd, &local_item_size, 0, NULL, NULL);
 		if (ret != CL_SUCCESS) {
 			printf("failed to start kernel: %d\n", ret); exit(1);
 		}
+		clFinish(command_queue);
 
 		// Copy result to host and see if a block was found.
-		ret = clEnqueueReadBuffer(command_queue, nonceOutmobj, CL_TRUE, 0, 8 * sizeof(uint8_t), nonceOut, 0, NULL, NULL);
+		/*ret = clEnqueueReadBuffer(command_queue, nonceOutmobj, CL_TRUE, 0, 8 * sizeof(uint8_t), nonceOut, 0, NULL, NULL);
 		if (ret != CL_SUCCESS) {
 			printf("failed to read nonce from buffer: %d\n", ret); exit(1);
-		}
+		}*/
 		if (nonceOut[0] != 0 || nonceOut[1] != 0 || nonceOut[2] != 0 || nonceOut[3] != 0 || nonceOut[4] != 0 || nonceOut[5] != 0 || nonceOut[6] != 0 || nonceOut[7] != 0) {
 			// Copy nonce to header.
 			memcpy(blockHeader+32, nonceOut, 8);
+			for (int i = 0;i < 8;i++) {
+				nonceOut[i] = 0;
+			}
 			if (!submit_header(blockHeader)) {
 				// Only count block if submit succeeded.
 				blocks_mined++;
@@ -507,9 +511,9 @@ int main(int argc, char *argv[]) {
 	command_queue = clCreateCommandQueue(context, device_id, 0, &ret);
 
 	// Create Buffer Objects.
-	blockHeadermobj = clCreateBuffer(context, CL_MEM_READ_ONLY, 80 * sizeof(uint8_t), NULL, &ret);
+	blockHeadermobj = clCreateBuffer(context, CL_MEM_READ_ONLY | CL_MEM_USE_HOST_PTR, 80 * sizeof(uint8_t), blockHeader, &ret);
 	if (ret != CL_SUCCESS) { printf("failed to create blockHeadermobj buffer: %d\n", ret); exit(1); }
-	nonceOutmobj = clCreateBuffer(context, CL_MEM_READ_WRITE, 8 * sizeof(uint8_t), NULL, &ret);
+	nonceOutmobj = clCreateBuffer(context, CL_MEM_READ_WRITE | CL_MEM_USE_HOST_PTR, 8 * sizeof(uint8_t), nonceOut, &ret);
 	if (ret != CL_SUCCESS) { printf("failed to create nonceOutmobj buffer: %d\n", ret); exit(1); }
 
 	// Create kernel program from source file.
